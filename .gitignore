@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build outputs
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Data files (opcional, descomenta si no quieres subir datos)
+# data/
+# *.json
+
+# Modelos descargados (se descargan automáticamente)
+.cache/
+models/
+
+CASOS_DE_PRUEBA.md
+
+QUICKSTART.md
+SOLUCION_MODELO_EMBEDDINGS.md
+CONFIGURACION.md
+CHECKLIST_PROYECTO.md
+INSTRUCCIONES_FINALES.md
+SOLUCION_MODELO_EMBEDDINGS.md
+SOLUCION_MODELO_EMBEDDINGS.md
