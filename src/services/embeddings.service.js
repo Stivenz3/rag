@@ -7,11 +7,16 @@ let sharp = null;
 async function getSharp() {
   if (!sharp) {
     try {
-      sharp = (await import('sharp')).default;
+      const sharpModule = await import('sharp');
+      sharp = sharpModule.default || sharpModule;
+      
+      if (!sharp) {
+        throw new Error('Sharp module is null or undefined');
+      }
     } catch (error) {
-      console.warn('⚠️ Sharp no está disponible. Las funciones de imagen pueden no funcionar.');
-      console.warn('   Para instalar: npm install --include=optional sharp');
-      throw new Error('Sharp no está instalado correctamente. Ejecuta: npm install --include=optional sharp');
+      console.error('❌ Error importando sharp:', error.message);
+      console.error('   Código de error:', error.code);
+      throw new Error(`Sharp no está disponible: ${error.message}. Ejecuta: npm run fix-sharp`);
     }
   }
   return sharp;
@@ -75,58 +80,93 @@ export async function generateTextEmbedding(text) {
     // @xenova/transformers devuelve un tensor
     const output = await model(text);
 
-    // El output es un tensor con propiedad .data
-    // Necesitamos extraer los datos y hacer pooling manualmente
     let embedding;
     
-    if (output && output.data) {
-      // Si es un tensor con .data
-      const data = Array.from(output.data);
+    // El output puede ser un tensor o un array
+    // Necesitamos extraer los datos correctamente
+    if (output && typeof output.data !== 'undefined') {
+      // Es un tensor con .data
+      const tensorData = output.data;
       
-      // El output puede ser [batch_size, seq_len, hidden_size]
-      // Necesitamos hacer mean pooling sobre la dimensión de secuencia
-      if (Array.isArray(data[0]) && Array.isArray(data[0][0])) {
-        // Formato: [batch][seq][hidden]
-        const batch = data[0]; // Tomar primer batch
-        const hiddenSize = batch[0].length;
-        embedding = new Array(hiddenSize).fill(0);
-        
-        // Mean pooling
-        for (let i = 0; i < batch.length; i++) {
-          for (let j = 0; j < hiddenSize; j++) {
-            embedding[j] += batch[i][j];
+      // Convertir a array y verificar forma
+      let data;
+      if (tensorData && typeof tensorData.toArray === 'function') {
+        data = await tensorData.toArray();
+      } else if (Array.isArray(tensorData)) {
+        data = tensorData;
+      } else {
+        data = Array.from(tensorData);
+      }
+      
+      // Determinar la forma del tensor
+      // Puede ser: [batch, seq, hidden] o [seq, hidden] o [hidden]
+      if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data[0]) && Array.isArray(data[0][0])) {
+          // Formato: [batch][seq][hidden] - tomar primer batch y hacer mean pooling
+          const batch = data[0];
+          const hiddenSize = batch[0]?.length || 384;
+          embedding = new Array(hiddenSize).fill(0);
+          
+          for (let i = 0; i < batch.length; i++) {
+            for (let j = 0; j < hiddenSize && j < batch[i].length; j++) {
+              embedding[j] += batch[i][j];
+            }
           }
-        }
-        for (let j = 0; j < hiddenSize; j++) {
-          embedding[j] /= batch.length;
-        }
-      } else if (Array.isArray(data[0])) {
-        // Formato: [seq][hidden] - hacer mean pooling
-        const seq = data;
-        const hiddenSize = seq[0].length;
-        embedding = new Array(hiddenSize).fill(0);
-        
-        for (let i = 0; i < seq.length; i++) {
           for (let j = 0; j < hiddenSize; j++) {
-            embedding[j] += seq[i][j];
+            embedding[j] /= batch.length;
           }
-        }
-        for (let j = 0; j < hiddenSize; j++) {
-          embedding[j] /= seq.length;
+        } else if (Array.isArray(data[0])) {
+          // Formato: [seq][hidden] - hacer mean pooling
+          const seq = data;
+          const hiddenSize = seq[0]?.length || 384;
+          embedding = new Array(hiddenSize).fill(0);
+          
+          for (let i = 0; i < seq.length; i++) {
+            for (let j = 0; j < hiddenSize && j < seq[i].length; j++) {
+              embedding[j] += seq[i][j];
+            }
+          }
+          for (let j = 0; j < hiddenSize; j++) {
+            embedding[j] /= seq.length;
+          }
+        } else {
+          // Ya es un array plano [hidden]
+          embedding = data;
         }
       } else {
-        // Ya es un array plano
-        embedding = data;
+        throw new Error('No se pudo extraer datos del tensor');
       }
     } else if (Array.isArray(output)) {
-      // Si ya es un array
+      // Si ya es un array directamente
       embedding = output;
       // Aplanar si es multidimensional
-      while (Array.isArray(embedding[0])) {
-        embedding = embedding[0];
+      while (Array.isArray(embedding) && embedding.length > 0 && Array.isArray(embedding[0])) {
+        // Si es [seq][hidden], hacer mean pooling
+        if (embedding[0].length === 384 || embedding[0].length > 100) {
+          const seq = embedding;
+          const hiddenSize = seq[0].length;
+          const pooled = new Array(hiddenSize).fill(0);
+          for (let i = 0; i < seq.length; i++) {
+            for (let j = 0; j < hiddenSize; j++) {
+              pooled[j] += seq[i][j];
+            }
+          }
+          for (let j = 0; j < hiddenSize; j++) {
+            pooled[j] /= seq.length;
+          }
+          embedding = pooled;
+        } else {
+          embedding = embedding[0];
+        }
       }
     } else {
-      throw new Error(`Formato de output no reconocido: ${typeof output}`);
+      // Intentar acceder a .data si existe
+      const data = output?.data;
+      if (data) {
+        embedding = Array.isArray(data) ? data : Array.from(data);
+      } else {
+        throw new Error(`Formato de output no reconocido: ${typeof output}. Tipo: ${output?.constructor?.name || 'unknown'}`);
+      }
     }
 
     // Normalizar el vector (L2 normalization)
@@ -140,6 +180,21 @@ export async function generateTextEmbedding(text) {
       throw new Error('El embedding está vacío');
     }
 
+    // Asegurar que el embedding tiene exactamente 384 dimensiones
+    // Si tiene más, truncar; si tiene menos, rellenar con ceros (no debería pasar)
+    const expectedDim = 384;
+    if (embedding.length !== expectedDim) {
+      console.warn(`⚠️ Embedding tiene ${embedding.length} dimensiones, esperado ${expectedDim}. Ajustando...`);
+      if (embedding.length > expectedDim) {
+        embedding = embedding.slice(0, expectedDim);
+      } else {
+        // Rellenar con ceros (no ideal, pero mejor que fallar)
+        while (embedding.length < expectedDim) {
+          embedding.push(0);
+        }
+      }
+    }
+
     return embedding;
   } catch (error) {
     console.error(`Error generando embedding:`, error.message);
@@ -148,28 +203,114 @@ export async function generateTextEmbedding(text) {
 }
 
 /**
- * Descarga y procesa una imagen desde URL
+ * Descarga y procesa una imagen desde URL - PROCESA TODAS LAS IMÁGENES
+ * Intenta múltiples métodos hasta que uno funcione
  */
 async function downloadAndProcessImage(imageUrl) {
+  let imageData = null;
+  let contentType = '';
+  
+  // Descargar imagen
   try {
     const response = await axios.get(imageUrl, {
       responseType: 'arraybuffer',
-      timeout: 10000,
+      timeout: 20000,
       headers: {
         'User-Agent': 'Mozilla/5.0'
       }
     });
-
-    // Procesar imagen con sharp (importación dinámica)
-    const sharpLib = await getSharp();
-    const imageBuffer = await sharpLib(response.data)
-      .resize(224, 224, { fit: 'cover' })
-      .toBuffer();
-
-    return imageBuffer;
+    imageData = Buffer.from(response.data);
+    contentType = response.headers['content-type'] || '';
   } catch (error) {
-    console.error(`⚠️ Error descargando/procesando imagen ${imageUrl}:`, error.message);
-    return null;
+    // Reintentar una vez
+    try {
+      const retryResponse = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 20000,
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      });
+      imageData = Buffer.from(retryResponse.data);
+      contentType = retryResponse.headers['content-type'] || '';
+    } catch (retryError) {
+      throw new Error(`No se pudo descargar la imagen: ${retryError.message}`);
+    }
+  }
+
+  if (!imageData) {
+    throw new Error('No se recibieron datos de la imagen');
+  }
+
+  // MÉTODO PRINCIPAL: Canvas (soporta WebP, JPEG, PNG nativamente)
+  // Canvas es la mejor opción porque funciona en Windows y soporta todos los formatos
+  try {
+    const canvasModule = await import('canvas');
+    const { createCanvas, loadImage } = canvasModule;
+    const img = await loadImage(imageData);
+    const canvas = createCanvas(224, 224);
+    const ctx = canvas.getContext('2d');
+    
+    // Calcular para cover (llenar 224x224 manteniendo aspecto)
+    const scale = Math.max(224 / img.width, 224 / img.height);
+    const x = (224 - img.width * scale) / 2;
+    const y = (224 - img.height * scale) / 2;
+    
+    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+    return canvas.toBuffer('image/jpeg');
+  } catch (canvasError) {
+    // Si canvas falla, intentar sharp
+    try {
+      const sharpLib = await getSharp();
+      return await sharpLib(imageData)
+        .resize(224, 224, { fit: 'cover' })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+    } catch (sharpError) {
+      // Si sharp también falla, intentar jimp (solo para formatos no-WebP)
+      const isWebP = contentType.includes('webp') || imageUrl.toLowerCase().includes('.webp');
+      if (!isWebP) {
+        try {
+          const jimpModule = await import('jimp');
+          const Jimp = jimpModule.Jimp || jimpModule.default || jimpModule;
+          
+          if (Jimp && typeof Jimp.read === 'function') {
+            const image = await Jimp.read(imageData);
+            const width = image.bitmap.width;
+            const height = image.bitmap.height;
+            const scale = Math.max(224 / width, 224 / height);
+            const newWidth = Math.round(width * scale);
+            const newHeight = Math.round(height * scale);
+            
+            image.resize(newWidth, newHeight);
+            const x = Math.round((newWidth - 224) / 2);
+            const y = Math.round((newHeight - 224) / 2);
+            image.crop(x, y, 224, 224);
+            
+            return await image.getBufferAsync('image/jpeg');
+          }
+        } catch (jimpError) {
+          // Jimp falló
+        }
+      }
+      
+      // Si TODO falla, reintentar canvas con diferentes opciones
+      try {
+        const canvasModule = await import('canvas');
+        const { createCanvas, loadImage } = canvasModule;
+        // Intentar cargar desde URL directamente si el buffer falla
+        const img = await loadImage(imageUrl);
+        const canvas = createCanvas(224, 224);
+        const ctx = canvas.getContext('2d');
+        
+        const scale = Math.max(224 / img.width, 224 / img.height);
+        const x = (224 - img.width * scale) / 2;
+        const y = (224 - img.height * scale) / 2;
+        
+        ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+        return canvas.toBuffer('image/jpeg');
+      } catch (finalCanvasError) {
+        throw new Error(`No se pudo procesar la imagen después de intentar canvas, sharp y jimp. Canvas error: ${canvasError.message}. URL: ${imageUrl.substring(0, 50)}...`);
+      }
+    }
   }
 }
 
@@ -188,12 +329,87 @@ export async function generateImageEmbedding(imageUrl) {
     throw new Error('No se pudo descargar la imagen');
   }
 
-  const output = await model(imageBuffer, {
-    pooling: 'mean',
-    normalize: true
-  });
+  try {
+    // Asegurar que imageBuffer es un Buffer válido
+    if (!Buffer.isBuffer(imageBuffer)) {
+      throw new Error('El buffer de imagen no es válido');
+    }
 
-  return Array.from(output.data);
+    // El modelo CLIP puede procesar imágenes directamente como Buffer
+    // No necesita procesamiento adicional si ya es una imagen válida
+    const output = await model(imageBuffer);
+
+    let embedding;
+    
+    // Procesar output similar a texto
+    if (output && typeof output.data !== 'undefined') {
+      const tensorData = output.data;
+      
+      let data;
+      if (tensorData && typeof tensorData.toArray === 'function') {
+        data = await tensorData.toArray();
+      } else if (Array.isArray(tensorData)) {
+        data = tensorData;
+      } else {
+        data = Array.from(tensorData);
+      }
+      
+      // CLIP devuelve [batch, hidden] o [hidden]
+      if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data[0])) {
+          // Formato: [batch][hidden] - tomar primer batch
+          embedding = data[0];
+        } else {
+          // Ya es un array plano [hidden]
+          embedding = data;
+        }
+      } else {
+        throw new Error('No se pudo extraer datos del tensor de imagen');
+      }
+    } else if (Array.isArray(output)) {
+      embedding = output;
+      // Aplanar si es multidimensional
+      while (Array.isArray(embedding) && embedding.length > 0 && Array.isArray(embedding[0])) {
+        embedding = embedding[0];
+      }
+    } else {
+      const data = output?.data;
+      if (data) {
+        embedding = Array.isArray(data) ? data : Array.from(data);
+      } else {
+        throw new Error(`Formato de output de imagen no reconocido: ${typeof output}`);
+      }
+    }
+
+    // Normalizar el vector (L2 normalization)
+    const norm = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
+    if (norm > 0) {
+      embedding = embedding.map(val => val / norm);
+    }
+
+    // Validar dimensiones (512 para CLIP vit-base-patch32)
+    if (embedding.length === 0) {
+      throw new Error('El embedding de imagen está vacío');
+    }
+
+    // Asegurar que tiene exactamente 512 dimensiones
+    const expectedDim = 512;
+    if (embedding.length !== expectedDim) {
+      console.warn(`⚠️ Embedding de imagen tiene ${embedding.length} dimensiones, esperado ${expectedDim}. Ajustando...`);
+      if (embedding.length > expectedDim) {
+        embedding = embedding.slice(0, expectedDim);
+      } else {
+        while (embedding.length < expectedDim) {
+          embedding.push(0);
+        }
+      }
+    }
+
+    return embedding;
+  } catch (error) {
+    console.error(`Error generando embedding de imagen:`, error.message);
+    throw error;
+  }
 }
 
 /**
@@ -226,6 +442,13 @@ export async function generateEmbeddingsForAllNews() {
 
       const embedding = await generateTextEmbedding(texto);
 
+      // Validar que el embedding tiene la dimensión correcta antes de guardar
+      if (!Array.isArray(embedding) || embedding.length !== 384) {
+        console.error(`❌ Embedding inválido para noticia ${article._id}: dimensión ${embedding?.length || 0}, esperado 384`);
+        errors++;
+        continue;
+      }
+
       await embeddingsCollection.insertOne({
         id_doc: article._id,
         embedding: embedding,
@@ -252,14 +475,23 @@ export async function generateEmbeddingsForAllNews() {
  * Genera embeddings para imágenes de noticias
  */
 export async function generateImageEmbeddingsForNews() {
-  // Verificar que sharp está disponible
+  // Verificar que tenemos alguna forma de procesar imágenes (sharp o jimp)
+  let canProcessImages = false;
   try {
     await getSharp();
-  } catch (error) {
-    console.error('❌ Sharp no está disponible. No se pueden generar embeddings de imágenes.');
-    console.error('   Ejecuta: npm run fix-sharp');
-    console.error('   O genera solo embeddings de texto: node src/scripts/generateEmbeddings.js text');
-    return { processed: 0, errors: 0 };
+    canProcessImages = true;
+    console.log('✅ Usando sharp para procesar imágenes');
+  } catch (sharpError) {
+    try {
+      await import('jimp');
+      canProcessImages = true;
+      console.log('✅ Usando jimp como alternativa para procesar imágenes (sharp no disponible)');
+    } catch (jimpError) {
+      console.error('❌ Ni sharp ni jimp están disponibles. No se pueden generar embeddings de imágenes.');
+      console.error('   Instala jimp: npm install jimp');
+      console.error('   O intenta arreglar sharp: npm run fix-sharp');
+      return { processed: 0, errors: 0 };
+    }
   }
 
   const db = await getDb();
@@ -268,10 +500,13 @@ export async function generateImageEmbeddingsForNews() {
 
   // Obtener noticias con imágenes que no tienen embeddings
   const newsWithImageEmbeddings = await imageEmbeddingsCollection.distinct('id_doc');
-  const news = await newsCollection.find({
+  // Obtener noticias con imágenes (filtrar después porque $size no acepta $gt)
+  const allNews = await newsCollection.find({
     _id: { $nin: newsWithImageEmbeddings },
-    imagenes: { $exists: true, $ne: [], $size: { $gt: 0 } }
+    imagenes: { $exists: true, $type: 'array' }
   }).toArray();
+  
+  const news = allNews.filter(n => Array.isArray(n.imagenes) && n.imagenes.length > 0);
 
   console.log(`📊 Generando embeddings para ${news.length} imágenes...`);
 
@@ -286,7 +521,21 @@ export async function generateImageEmbeddingsForNews() {
         continue;
       }
 
-      const embedding = await generateImageEmbedding(imageUrl);
+      let embedding;
+      try {
+        embedding = await generateImageEmbedding(imageUrl);
+      } catch (embedError) {
+        console.error(`❌ Error generando embedding para imagen ${imageUrl?.substring(0, 50)}...:`, embedError.message);
+        errors++;
+        continue; // Saltar esta imagen y continuar
+      }
+
+      // Validar que el embedding tiene la dimensión correcta antes de guardar
+      if (!Array.isArray(embedding) || embedding.length !== 512) {
+        console.error(`❌ Embedding de imagen inválido para noticia ${article._id}: dimensión ${embedding?.length || 0}, esperado 512`);
+        errors++;
+        continue;
+      }
 
       await imageEmbeddingsCollection.insertOne({
         id_doc: article._id,
@@ -315,44 +564,52 @@ export async function generateImageEmbeddingsForNews() {
 }
 
 /**
- * Búsqueda vectorial usando cosine similarity (fallback si no hay Atlas Vector Search)
+ * Búsqueda vectorial pura usando cosine similarity
+ * Solo busca por similitud vectorial, sin filtros tradicionales
+ * Usa los embeddings generados en Python/Colab
  */
-export async function vectorSearch(embedding, filters = {}, limit = 5) {
+export async function vectorSearch(embedding, limit = 5) {
   const db = await getDb();
   const embeddingsCollection = db.collection(COLLECTIONS.EMBEDDINGS);
 
-  // Si hay filtros, primero obtenemos los IDs de documentos que cumplen
-  let allowedDocIds = null;
-  if (Object.keys(filters).length > 0) {
-    const newsCollection = db.collection(COLLECTIONS.NOTICIAS);
-    const query = {};
-    
-    if (filters.idioma) query.idioma = filters.idioma;
-    if (filters.categoria) query.categoria = filters.categoria;
-    if (filters.fechaDesde || filters.fechaHasta) {
-      query.fecha = {};
-      if (filters.fechaDesde) query.fecha.$gte = filters.fechaDesde;
-      if (filters.fechaHasta) query.fecha.$lte = filters.fechaHasta;
-    }
-
-    const matchingNews = await newsCollection.find(query, { projection: { _id: 1 } }).toArray();
-    allowedDocIds = matchingNews.map(n => n._id);
-  }
-
-  // Obtener todos los embeddings
-  const query = allowedDocIds ? { id_doc: { $in: allowedDocIds } } : {};
-  const allEmbeddings = await embeddingsCollection.find(query).toArray();
+  // Obtener todos los embeddings (generados en Python/Colab)
+  const allEmbeddings = await embeddingsCollection.find({}).toArray();
 
   if (allEmbeddings.length === 0) {
     return [];
   }
 
-  // Calcular similitud coseno
-  const similarities = allEmbeddings.map(doc => {
-    const docEmbedding = doc.embedding;
-    const similarity = cosineSimilarity(embedding, docEmbedding);
-    return { ...doc, similarity };
-  });
+  // Validar dimensión del embedding de consulta
+  const queryDim = embedding.length;
+  if (!queryDim || queryDim === 0) {
+    throw new Error(`El embedding de la consulta está vacío o es inválido`);
+  }
+
+  // Filtrar embeddings con dimensiones incorrectas y calcular similitud
+  const similarities = allEmbeddings
+    .filter(doc => {
+      const docEmbedding = doc.embedding;
+      if (!Array.isArray(docEmbedding)) {
+        console.warn(`⚠️ Embedding inválido para doc ${doc.id_doc}: no es un array`);
+        return false;
+      }
+      if (docEmbedding.length !== queryDim) {
+        console.warn(`⚠️ Embedding con dimensión incorrecta para doc ${doc.id_doc}: esperado ${queryDim}, encontrado ${docEmbedding.length}`);
+        return false;
+      }
+      return true;
+    })
+    .map(doc => {
+      const docEmbedding = doc.embedding;
+      try {
+        const similarity = cosineSimilarity(embedding, docEmbedding);
+        return { ...doc, similarity };
+      } catch (error) {
+        console.error(`Error calculando similitud para doc ${doc.id_doc}:`, error.message);
+        return null;
+      }
+    })
+    .filter(result => result !== null);
 
   // Ordenar por similitud y tomar los top N
   similarities.sort((a, b) => b.similarity - a.similarity);
@@ -363,8 +620,19 @@ export async function vectorSearch(embedding, filters = {}, limit = 5) {
  * Calcula similitud coseno entre dos vectores
  */
 function cosineSimilarity(vecA, vecB) {
+  // Validar que son arrays
+  if (!Array.isArray(vecA) || !Array.isArray(vecB)) {
+    throw new Error(`Los vectores deben ser arrays. vecA: ${typeof vecA}, vecB: ${typeof vecB}`);
+  }
+
+  // Validar dimensiones
   if (vecA.length !== vecB.length) {
-    throw new Error('Los vectores deben tener la misma dimensión');
+    throw new Error(`Los vectores deben tener la misma dimensión. vecA: ${vecA.length}, vecB: ${vecB.length}`);
+  }
+
+  // Validar que no están vacíos
+  if (vecA.length === 0) {
+    throw new Error('Los vectores no pueden estar vacíos');
   }
 
   let dotProduct = 0;

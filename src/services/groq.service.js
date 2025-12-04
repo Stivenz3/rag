@@ -5,14 +5,22 @@ dotenv.config();
 
 const GROQ_API_BASE = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-70b-versatile';
+// Modelo actualizado: llama-3.1-70b-versatile fue descontinuado
+// Usar llama-3.1-8b-instant (rápido) o llama-3.3-70b-versatile (más potente)
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
 /**
  * Genera respuesta usando Groq LLM con contexto RAG
  */
 export async function generateRAGResponse(query, contextDocuments) {
-  if (!GROQ_API_KEY) {
-    throw new Error('GROQ_API_KEY no está configurada en las variables de entorno');
+  // Validar API key
+  if (!GROQ_API_KEY || GROQ_API_KEY === 'your_groq_api_key_here' || GROQ_API_KEY.trim() === '') {
+    throw new Error('GROQ_API_KEY no está configurada o es inválida. Por favor, configura tu API key de Groq en el archivo .env. Obtén una en: https://console.groq.com/');
+  }
+  
+  // Validar formato de API key (debe empezar con gsk_)
+  if (!GROQ_API_KEY.startsWith('gsk_')) {
+    throw new Error('GROQ_API_KEY tiene un formato inválido. Debe empezar con "gsk_". Verifica tu API key en: https://console.groq.com/');
   }
 
   // Construir contexto a partir de los documentos recuperados
@@ -73,8 +81,28 @@ Por favor, responde la pregunta basándote en el contexto proporcionado. Si nece
       context_documents_count: contextDocuments.length
     };
   } catch (error) {
-    console.error('Error llamando a Groq API:', error.response?.data || error.message);
-    throw new Error(`Error generando respuesta con LLM: ${error.message}`);
+    // Manejo mejorado de errores
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+      
+      if (status === 401) {
+        console.error('❌ Error 401: Autenticación fallida con Groq API');
+        console.error('   Verifica que tu GROQ_API_KEY sea correcta en el archivo .env');
+        console.error('   Obtén una nueva API key en: https://console.groq.com/');
+        throw new Error('Error de autenticación con Groq API. Verifica que tu GROQ_API_KEY sea válida en el archivo .env. Obtén una nueva en: https://console.groq.com/');
+      } else if (status === 429) {
+        throw new Error('Límite de tasa excedido en Groq API. Intenta más tarde.');
+      } else if (status === 400) {
+        throw new Error(`Error en la solicitud a Groq API: ${data?.error?.message || 'Solicitud inválida'}`);
+      } else {
+        throw new Error(`Error en Groq API (${status}): ${data?.error?.message || error.message}`);
+      }
+    } else if (error.request) {
+      throw new Error('No se pudo conectar con Groq API. Verifica tu conexión a internet.');
+    } else {
+      throw new Error(`Error generando respuesta con LLM: ${error.message}`);
+    }
   }
 }
 
@@ -82,8 +110,14 @@ Por favor, responde la pregunta basándote en el contexto proporcionado. Si nece
  * Genera respuesta simple sin contexto (para pruebas)
  */
 export async function generateSimpleResponse(query) {
-  if (!GROQ_API_KEY) {
-    throw new Error('GROQ_API_KEY no está configurada');
+  // Validar API key
+  if (!GROQ_API_KEY || GROQ_API_KEY === 'your_groq_api_key_here' || GROQ_API_KEY.trim() === '') {
+    throw new Error('GROQ_API_KEY no está configurada o es inválida. Por favor, configura tu API key de Groq en el archivo .env. Obtén una en: https://console.groq.com/');
+  }
+  
+  // Validar formato de API key
+  if (!GROQ_API_KEY.startsWith('gsk_')) {
+    throw new Error('GROQ_API_KEY tiene un formato inválido. Debe empezar con "gsk_". Verifica tu API key en: https://console.groq.com/');
   }
 
   try {
@@ -107,8 +141,23 @@ export async function generateSimpleResponse(query) {
 
     return response.data.choices[0]?.message?.content || 'No se pudo generar una respuesta';
   } catch (error) {
-    console.error('Error llamando a Groq API:', error.response?.data || error.message);
-    throw new Error(`Error generando respuesta: ${error.message}`);
+    // Manejo mejorado de errores
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+      
+      if (status === 401) {
+        throw new Error('Error de autenticación con Groq API. Verifica que tu GROQ_API_KEY sea válida en el archivo .env. Obtén una nueva en: https://console.groq.com/');
+      } else if (status === 429) {
+        throw new Error('Límite de tasa excedido en Groq API. Intenta más tarde.');
+      } else {
+        throw new Error(`Error en Groq API (${status}): ${data?.error?.message || error.message}`);
+      }
+    } else if (error.request) {
+      throw new Error('No se pudo conectar con Groq API. Verifica tu conexión a internet.');
+    } else {
+      throw new Error(`Error generando respuesta: ${error.message}`);
+    }
   }
 }
 

@@ -48,6 +48,8 @@ export async function closeConnection() {
 export const COLLECTIONS = {
   NOTICIAS: 'noticias',
   EMBEDDINGS: 'embeddings',
-  IMAGE_EMBEDDINGS: 'image_embeddings'
+  IMAGE_EMBEDDINGS: 'image_embeddings',
+  COMENTARIOS: 'comentarios',
+  CATEGORIAS: 'categorias'
 };
 

@@ -45,7 +45,7 @@ MONGODB_URI=mongodb+srv://usuario:password@cluster0.xxxxx.mongodb.net/...
 DB_NAME=rag_noticias
 NEWS_API_KEY=tu_api_key_de_newsdata
 GROQ_API_KEY=tu_api_key_de_groq
-GROQ_MODEL=llama-3.1-70b-versatile
+GROQ_MODEL=llama-3.1-8b-instant
 PORT=3000
 ```
 
@@ -191,7 +191,7 @@ Pipeline RAG completo: búsqueda + generación de respuesta con LLM.
     }
   ],
   "metadata": {
-    "model": "llama-3.1-70b-versatile",
+        "model": "llama-3.1-8b-instant",
     "tokens_used": 450,
     "documents_used": 5,
     "total_time_ms": 1234

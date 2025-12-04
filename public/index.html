@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema RAG - Búsqueda Vectorial</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>     Sistema RAG - Búsqueda Vectorial</h1>
+            <p class="subtitle">Búsqueda semántica con embeddings generados en Python/Colab</p>
+        </header>
+
+        <!-- Sección de usuario (nombre y apellido para comentarios) -->
+        <section class="user-section">
+            <div class="user-info">
+                <h2>Usuario</h2>
+                <p class="user-description">
+                    Antes de comentar, define un usuario con nombre y apellido. 
+                    Se usará como autor de los comentarios ligados a cada noticia.
+                </p>
+            </div>
+            <form id="user-form" class="user-form">
+                <div class="form-group-inline">
+                    <div class="form-group">
+                        <label for="user-nombre">Nombre:</label>
+                        <input type="text" id="user-nombre" placeholder="Nombre">
+                    </div>
+                    <div class="form-group">
+                        <label for="user-apellido">Apellido:</label>
+                        <input type="text" id="user-apellido" placeholder="Apellido">
+                    </div>
+                </div>
+                <button type="submit" class="btn-secondary">Guardar usuario</button>
+                <p id="user-status" class="user-status"></p>
+            </form>
+        </section>
+
+        <div class="tabs">
+            <button class="tab-button active" data-tab="search">Búsqueda Vectorial</button>
+            <button class="tab-button" data-tab="rag">RAG (Respuesta con IA)</button>
+        </div>
+
+        <!-- TAB 1: Búsqueda Vectorial -->
+        <div id="search-tab" class="tab-content active">
+            <div class="search-section">
+                <form id="search-form" class="search-form">
+                    <div class="form-group">
+                        <label for="search-query">Consulta de búsqueda:</label>
+                        <input 
+                            type="text" 
+                            id="search-query" 
+                            placeholder="Ej: inteligencia artificial, tecnología, deportes..."
+                            required
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label for="search-limit">Resultados:</label>
+                        <select id="search-limit">
+                            <option value="5">5</option>
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                        </select>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="incluir-comentarios">
+                            Incluir comentarios
+                        </label>
+                    </div>
+                    <button type="submit" class="btn-primary">Buscar</button>
+                </form>
+            </div>
+
+            <div id="search-results" class="results-container"></div>
+        </div>
+
+        <!-- TAB 2: RAG -->
+        <div id="rag-tab" class="tab-content">
+            <div class="search-section">
+                <form id="rag-form" class="search-form">
+                    <div class="form-group">
+                        <label for="rag-query">Pregunta para el sistema RAG:</label>
+                        <textarea 
+                            id="rag-query" 
+                            rows="3"
+                            placeholder="Ej: ¿Qué documentos hablan sobre sostenibilidad ambiental? Explica las principales tendencias..."
+                            required
+                        ></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="rag-limit">Documentos de contexto:</label>
+                        <select id="rag-limit">
+                            <option value="3">3</option>
+                            <option value="5" selected>5</option>
+                            <option value="10">10</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn-primary">Generar Respuesta RAG</button>
+                </form>
+            </div>
+
+            <div id="rag-results" class="results-container"></div>
+        </div>
+
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>Procesando...</p>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
+

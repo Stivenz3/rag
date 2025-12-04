@@ -47,7 +47,7 @@ export async function loadNewsFromAPI(maxPages = 10, apiKey) {
           link_original: item.link || null,
           createdAt: new Date()
         }))
-        .filter(doc => doc.titulo && doc.contenido_texto); // Solo documentos válidos
+        .filter(doc => doc.titulo && doc.contenido_texto);
 
       if (docs.length > 0) {
         // Insertar uno por uno para manejar errores de validación
@@ -58,7 +58,6 @@ export async function loadNewsFromAPI(maxPages = 10, apiKey) {
             inserted++;
           } catch (error) {
             if (error.code === 121) {
-              // Error de validación de esquema
               console.error(`⚠️ Documento rechazado por validación: ${doc.titulo?.substring(0, 50)}...`);
             } else {
               console.error(`⚠️ Error insertando documento:`, error.message);
@@ -133,10 +132,53 @@ export async function getNewsById(id) {
   const db = await getDb();
   const collection = db.collection(COLLECTIONS.NOTICIAS);
   
-  // Convertir string a ObjectId si es necesario
   const { ObjectId } = await import('mongodb');
   const objectId = typeof id === 'string' ? new ObjectId(id) : id;
   
   return await collection.findOne({ _id: objectId });
+}
+
+/**
+ * Actualiza una noticia por ID (campos básicos)
+ */
+export async function updateNews(id, updates) {
+  const db = await getDb();
+  const collection = db.collection(COLLECTIONS.NOTICIAS);
+
+  const { ObjectId } = await import('mongodb');
+  const objectId = typeof id === 'string' ? new ObjectId(id) : id;
+
+  // Solo permitir actualizar ciertos campos
+  const allowedFields = [
+    'titulo',
+    'contenido_texto',
+    'categoria',
+    'idioma',
+    'imagenes',
+    'fecha'
+  ];
+
+  const set = {};
+  for (const field of allowedFields) {
+    if (Object.prototype.hasOwnProperty.call(updates, field)) {
+      set[field] = updates[field];
+    }
+  }
+
+  if (Object.keys(set).length === 0) {
+    throw new Error('No hay campos válidos para actualizar');
+  }
+
+  const result = await collection.findOneAndUpdate(
+    { _id: objectId },
+    { $set: set },
+    { returnDocument: 'after' }
+  );
+
+  if (!result.value) {
+    throw new Error('Noticia no encontrada');
+  }
+
+  return result.value;
 }
 

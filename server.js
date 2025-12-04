@@ -13,6 +13,9 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Servir archivos estáticos del frontend
+app.use(express.static('public'));
+
 // Routes
 app.use('/api', ragRoutes);
 
@@ -25,18 +28,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Root endpoint
+// Root endpoint - servir frontend
 app.get('/', (req, res) => {
-  res.json({
-    message: 'API del Sistema RAG con MongoDB',
-    version: '1.0.0',
-    endpoints: {
-      health: '/health',
-      search: 'POST /api/search',
-      rag: 'POST /api/rag',
-      news: 'GET /api/news'
-    }
-  });
+  res.sendFile('index.html', { root: './public' });
 });
 
 // Error handling middleware
